@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { CalendarDays, Database, ExternalLink, FileText, Search, Trophy, Video, X as XIcon } from 'lucide-react'
+import { CalendarDays, Database, ExternalLink, FileText, GraduationCap, Search, Trophy, Video, X as XIcon } from 'lucide-react'
 import matches from './matches.json'
+import trainings from './trainings.json'
 import './styles.css'
 
 const resultStyles = {
@@ -37,7 +38,7 @@ function isValidExternalUrl(href) {
   }
 }
 
-function compareMatchDate(a, b) {
+function compareByDate(a, b) {
   const dateOrder = String(a.date ?? '').localeCompare(String(b.date ?? ''))
 
   if (dateOrder !== 0) {
@@ -71,6 +72,25 @@ function filterMatches(records, query) {
   })
 }
 
+function getTrainingSearchText(training) {
+  return [training.date, training.instructor]
+    .map((value) => String(value ?? '').toLowerCase())
+    .join(' ')
+}
+
+function filterTrainings(records, query) {
+  const keywords = String(query ?? '').trim().toLowerCase().split(/\s+/).filter(Boolean)
+
+  if (!keywords.length) {
+    return records
+  }
+
+  return records.filter((training) => {
+    const searchText = getTrainingSearchText(training)
+    return keywords.every((keyword) => searchText.includes(keyword))
+  })
+}
+
 function calculateStats(records) {
   const total = records.length
   const wins = records.filter((match) => match.result === '胜').length
@@ -78,6 +98,15 @@ function calculateStats(records) {
   const tournaments = new Set(records.map((match) => match.tournament)).size
 
   return { total, wins, winRate, tournaments }
+}
+
+function calculateTrainingStats(records) {
+  const total = records.length
+  const instructors = new Set(records.map((training) => training.instructor).filter(Boolean)).size
+  const latestDate = records[records.length - 1]?.date ?? '暂无'
+  const linked = records.filter((training) => isValidExternalUrl(training.linkUrl)).length
+
+  return { total, instructors, latestDate, linked }
 }
 
 function StatCard({ label, value, subLabel, icon: Icon }) {
@@ -111,8 +140,43 @@ function StatsBoard({ records, isFiltered }) {
   )
 }
 
-function FilterBar({ query, onQueryChange, visibleCount, totalCount }) {
+function TrainingStatsBoard({ records, isFiltered }) {
+  const stats = calculateTrainingStats(records)
+  const scopeLabel = isFiltered ? '当前检索结果' : '全部队训记录'
+
+  return (
+    <section className="grid gap-4 md:grid-cols-4">
+      <StatCard label="队训次数" value={stats.total} subLabel={scopeLabel} icon={GraduationCap} />
+      <StatCard label="授课人数" value={stats.instructors} subLabel="已录入授课人数量" icon={Database} />
+      <StatCard label="最新队训" value={stats.latestDate} subLabel="按日期自动排序" icon={CalendarDays} />
+      <StatCard label="链接数量" value={stats.linked} subLabel="可跳转的队训资料" icon={FileText} />
+    </section>
+  )
+}
+
+function FilterBar({ activeView, onViewChange, query, onQueryChange, visibleCount, totalCount }) {
   const hasQuery = query.trim().length > 0
+  const isTrainingView = activeView === 'trainings'
+  const searchConfig = isTrainingView
+    ? {
+        label: '搜索队训信息',
+        placeholder: '搜索日期或授课人',
+        description: '输入日期或授课人关键词，队训列表会即时更新。',
+        chips: ['日期', '授课人'],
+        unit: '条',
+      }
+    : {
+        label: '搜索比赛信息',
+        placeholder: '搜索姓名、日期或赛事',
+        description: '输入姓名、日期或赛事关键词，列表会即时更新。',
+        chips: ['姓名', '日期', '赛事'],
+        unit: '场',
+      }
+
+  function switchView(nextView) {
+    onViewChange(nextView)
+    onQueryChange('')
+  }
 
   return (
     <section className="flex flex-col gap-4 rounded-lg border border-dashed border-slate-300 bg-white p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -122,20 +186,36 @@ function FilterBar({ query, onQueryChange, visibleCount, totalCount }) {
         </span>
         <div>
           <h2 className="text-sm font-semibold text-ink">数据检索</h2>
-          <p className="text-sm text-slate-500">输入姓名、日期或赛事关键词，列表会即时更新。</p>
+          <p className="text-sm text-slate-500">{searchConfig.description}</p>
+          <div className="mt-3 inline-flex rounded-md border border-line bg-field p-1">
+            <button
+              type="button"
+              onClick={() => switchView('matches')}
+              className={`h-8 rounded px-3 text-sm font-medium transition ${activeView === 'matches' ? 'bg-white text-ink shadow-sm' : 'text-slate-500 hover:text-ink'}`}
+            >
+              比赛
+            </button>
+            <button
+              type="button"
+              onClick={() => switchView('trainings')}
+              className={`h-8 rounded px-3 text-sm font-medium transition ${isTrainingView ? 'bg-white text-ink shadow-sm' : 'text-slate-500 hover:text-ink'}`}
+            >
+              队训
+            </button>
+          </div>
         </div>
       </div>
 
       <div className="flex w-full flex-col gap-3 lg:max-w-xl">
-        <label className="sr-only" htmlFor="match-search">搜索比赛信息</label>
+        <label className="sr-only" htmlFor="repository-search">{searchConfig.label}</label>
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} strokeWidth={1.8} />
           <input
-            id="match-search"
+            id="repository-search"
             type="search"
             value={query}
             onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="搜索姓名、日期或赛事"
+            placeholder={searchConfig.placeholder}
             className="h-10 w-full rounded-md border border-line bg-field pl-9 pr-10 text-sm text-ink outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"
           />
           {hasQuery ? (
@@ -150,10 +230,10 @@ function FilterBar({ query, onQueryChange, visibleCount, totalCount }) {
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-md border border-line px-3 py-2 text-sm text-slate-500">姓名</span>
-          <span className="rounded-md border border-line px-3 py-2 text-sm text-slate-500">日期</span>
-          <span className="rounded-md border border-line px-3 py-2 text-sm text-slate-500">赛事</span>
-          <span className="text-sm text-slate-500 sm:ml-auto">显示 {visibleCount} / {totalCount} 场</span>
+          {searchConfig.chips.map((chip) => (
+            <span key={chip} className="rounded-md border border-line px-3 py-2 text-sm text-slate-500">{chip}</span>
+          ))}
+          <span className="text-sm text-slate-500 sm:ml-auto">显示 {visibleCount} / {totalCount} {searchConfig.unit}</span>
         </div>
       </div>
     </section>
@@ -268,11 +348,53 @@ function MatchTable({ records }) {
   )
 }
 
+function TrainingTable({ records }) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-line bg-white shadow-panel">
+      <div className="border-b border-line px-5 py-4">
+        <h2 className="text-lg font-semibold text-ink">队训列表区</h2>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[720px] w-full border-collapse text-left">
+          <thead className="bg-field text-sm text-slate-600">
+            <tr>
+              <th className="px-5 py-3 font-semibold">日期</th>
+              <th className="px-5 py-3 font-semibold">授课人</th>
+              <th className="px-5 py-3 font-semibold">链接跳转</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {records.length ? records.map((training) => (
+              <tr key={training.id} className="align-top hover:bg-slate-50/70">
+                <td className="whitespace-nowrap px-5 py-4 text-sm text-slate-600">{training.date}</td>
+                <td className="px-5 py-4 text-sm font-medium text-ink">{training.instructor}</td>
+                <td className="px-5 py-4">
+                  <LinkButton href={training.linkUrl} icon={FileText}>队训链接</LinkButton>
+                </td>
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={3} className="px-5 py-10 text-center text-sm text-slate-500">没有匹配的队训记录</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
 function App() {
+  const [activeView, setActiveView] = useState('matches')
   const [query, setQuery] = useState('')
   const isFiltered = query.trim().length > 0
-  const sortedMatches = useMemo(() => [...matches].sort(compareMatchDate), [])
+  const isTrainingView = activeView === 'trainings'
+  const sortedMatches = useMemo(() => [...matches].sort(compareByDate), [])
+  const sortedTrainings = useMemo(() => [...trainings].sort(compareByDate), [])
   const visibleMatches = useMemo(() => filterMatches(sortedMatches, query), [query, sortedMatches])
+  const visibleTrainings = useMemo(() => filterTrainings(sortedTrainings, query), [query, sortedTrainings])
+  const visibleRecords = isTrainingView ? visibleTrainings : visibleMatches
+  const totalRecords = isTrainingView ? sortedTrainings.length : sortedMatches.length
 
   return (
     <main className="min-h-screen bg-[#eef3f6] text-ink">
@@ -289,9 +411,20 @@ function App() {
       </header>
 
       <div className="mx-auto grid max-w-7xl gap-5 px-5 py-6">
-        <StatsBoard records={visibleMatches} isFiltered={isFiltered} />
-        <FilterBar query={query} onQueryChange={setQuery} visibleCount={visibleMatches.length} totalCount={sortedMatches.length} />
-        <MatchTable records={visibleMatches} />
+        {isTrainingView ? (
+          <TrainingStatsBoard records={visibleTrainings} isFiltered={isFiltered} />
+        ) : (
+          <StatsBoard records={visibleMatches} isFiltered={isFiltered} />
+        )}
+        <FilterBar
+          activeView={activeView}
+          onViewChange={setActiveView}
+          query={query}
+          onQueryChange={setQuery}
+          visibleCount={visibleRecords.length}
+          totalCount={totalRecords}
+        />
+        {isTrainingView ? <TrainingTable records={visibleTrainings} /> : <MatchTable records={visibleMatches} />}
       </div>
     </main>
   )
