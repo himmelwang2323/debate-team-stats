@@ -42,7 +42,7 @@
     "motion": "在当下，优先推动减工时/加工资更有助于实现打工人福祉",
     "side": "正方",
     "result": "胜",
-    "bestDebater": "李劼","常智翔",
+    "bestDebater": ["李劼","常智翔"],
     "lineup": ["董展妍", "李官卓", "李劼", "常智翔"],
     "videoUrl": "https://example.com/videos/match-2026-004",
     "docUrl": "https://example.com/docs/match-2026-004"
