@@ -1,0 +1,50 @@
+[
+  {
+    "id": "match-2026-001",
+    "date": "2026-03-12",
+    "tournament": "春季校际邀请赛",
+    "motion": "人工智能生成内容应当被纳入高校学术诚信审查体系",
+    "side": "正方",
+    "result": "胜",
+    "bestDebater": "林知远",
+    "lineup": ["林知远", "周若曦", "陈一鸣", "许安澜"],
+    "videoUrl": "https://example.com/videos/match-2026-001",
+    "docUrl": "https://example.com/docs/match-2026-001"
+  },
+  {
+    "id": "match-2026-002",
+    "date": "2026-03-28",
+    "tournament": "城市青年辩论联赛",
+    "motion": "当代年轻人更需要稳定感而非可能性",
+    "side": "反方",
+    "result": "负",
+    "bestDebater": "周若曦",
+    "lineup": ["周若曦", "林知远", "许安澜", "陈一鸣"],
+    "videoUrl": "https://example.com/videos/match-2026-002",
+    "docUrl": "https://example.com/docs/match-2026-002"
+  },
+  {
+    "id": "match-2026-003",
+    "date": "2026-04-09",
+    "tournament": "华东高校冠军杯",
+    "motion": "社交媒体平台应优先保护公共讨论质量而非表达自由最大化",
+    "side": "正方",
+    "result": "胜",
+    "bestDebater": "许安澜",
+    "lineup": ["陈一鸣", "许安澜", "林知远", "周若曦"],
+    "videoUrl": "https://example.com/videos/match-2026-003",
+    "docUrl": "https://example.com/docs/match-2026-003"
+  },
+  {
+    "id": "match-2026-004",
+    "date": "2026-04-21",
+    "tournament": "新生训练赛",
+    "motion": "大学教育应更重视职业技能而非通识教育",
+    "side": "反方",
+    "result": "平",
+    "bestDebater": "陈一鸣",
+    "lineup": ["许安澜", "陈一鸣", "周若曦", "林知远"],
+    "videoUrl": "https://example.com/videos/match-2026-004",
+    "docUrl": "https://example.com/docs/match-2026-004"
+  }
+]
