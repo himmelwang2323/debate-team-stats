@@ -10,6 +10,33 @@ const resultStyles = {
   平: 'bg-slate-50 text-slate-600 ring-slate-200',
 }
 
+function normalizeExternalUrl(href) {
+  const value = String(href ?? '').trim()
+
+  if (!value) {
+    return ''
+  }
+
+  if (value.startsWith('//')) {
+    return `https:${value}`
+  }
+
+  if (/^https?:\/\//i.test(value)) {
+    return value
+  }
+
+  return `https://${value}`
+}
+
+function isValidExternalUrl(href) {
+  try {
+    const url = new URL(normalizeExternalUrl(href))
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
 function calculateStats(records) {
   const total = records.length
   const wins = records.filter((match) => match.result === '胜').length
@@ -71,11 +98,36 @@ function FilterBar() {
 }
 
 function LinkButton({ href, children, icon: Icon }) {
+  const resolvedHref = normalizeExternalUrl(href)
+  const isValidHref = isValidExternalUrl(href)
+
+  if (!isValidHref) {
+    return (
+      <button
+        type="button"
+        disabled
+        title="链接未填写或格式不正确"
+        className="inline-flex h-9 cursor-not-allowed items-center justify-center gap-2 rounded-md border border-line bg-slate-100 px-3 text-sm font-medium text-slate-400"
+      >
+        <Icon size={16} strokeWidth={1.9} />
+        {children}
+      </button>
+    )
+  }
+
+  function openExternalLink(event) {
+    event.preventDefault()
+    window.open(resolvedHref, '_blank', 'noopener,noreferrer')
+  }
+
   return (
     <a
-      href={href}
+      href={resolvedHref}
       target="_blank"
       rel="noreferrer"
+      title={resolvedHref}
+      aria-label={`${children}: ${resolvedHref}`}
+      onClick={openExternalLink}
       className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink transition hover:border-slate-400 hover:bg-field focus:outline-none focus:ring-2 focus:ring-slate-300"
     >
       <Icon size={16} strokeWidth={1.9} />
