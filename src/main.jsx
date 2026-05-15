@@ -57,8 +57,8 @@ function FilterBar() {
           <Search size={18} strokeWidth={1.8} />
         </span>
         <div>
-          <h2 className="text-sm font-semibold text-ink">筛选控件区</h2>
-          <p className="text-sm text-slate-500">预留按队员姓名、年份、赛事或持方筛选的位置。</p>
+          <h2 className="text-sm font-semibold text-ink">数据检索</h2>
+          <p className="text-sm text-slate-500">目前检索（即将包括）姓名、日期、赛事。</p>
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -150,10 +150,10 @@ function App() {
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-5 py-6 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="text-sm font-semibold text-slate-500">Debate Team Match Repository</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-normal text-ink">辩论队数据统计系统</h1>
+            <h1 className="mt-2 text-3xl font-semibold tracking-normal text-ink">奔奔水吧起飞记录</h1>
           </div>
           <p className="max-w-2xl text-sm leading-6 text-slate-600">
-            以单场比赛记录为核心，录像与资料通过外部链接挂载，适合轻量维护和后续接入云表格 API。
+            录像与资料通过外部链接表达（飞书/腾讯文档链接），相关问题请找wxjxscftwiv@gmail.com。
           </p>
         </div>
       </header>
