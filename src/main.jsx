@@ -4,6 +4,7 @@ import { CalendarDays, Database, ExternalLink, FileText, GraduationCap, Search, 
 import matches from './matches.json'
 import trainings from './trainings.json'
 import './styles.css'
+import './submission-widget.js'
 
 const resultStyles = {
   胜: 'bg-emerald-50 text-win ring-emerald-200',
