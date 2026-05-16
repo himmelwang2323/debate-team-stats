@@ -1,0 +1,160 @@
+name: Ingest match submission
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  ingest:
+    if: contains(github.event.issue.body, 'AUTO_MATCH_SUBMISSION')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Add submitted match
+        id: update
+        run: |
+          node <<'NODE'
+          const fs = require('fs')
+
+          const marker = 'AUTO_MATCH_SUBMISSION'
+          const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'))
+          const issue = event.issue
+          const body = issue.body || ''
+          const block = body.match(new RegExp(`<!--\\s*${marker}\\s*([\\s\\S]*?)\\s*-->`))
+
+          if (!block) {
+            throw new Error('No match submission payload found')
+          }
+
+          const payload = JSON.parse(block[1])
+          const allowedSides = new Set(['正方', '反方'])
+          const allowedResults = new Set(['胜', '负', '平'])
+
+          function clean(value, fallback = '', maxLength = 1000) {
+            const text = String(value ?? fallback).trim()
+            return text.slice(0, maxLength)
+          }
+
+          function requireDate(value) {
+            const date = clean(value, '', 20)
+
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+              throw new Error('Invalid date. Expected YYYY-MM-DD.')
+            }
+
+            return date
+          }
+
+          function requireChoice(value, allowed, label) {
+            const text = clean(value, '', 20)
+
+            if (!allowed.has(text)) {
+              throw new Error(`Invalid ${label}: ${text}`)
+            }
+
+            return text
+          }
+
+          function q(value) {
+            return JSON.stringify(value)
+          }
+
+          function compareByDate(a, b) {
+            const dateOrder = String(a.date ?? '').localeCompare(String(b.date ?? ''))
+
+            if (dateOrder !== 0) {
+              return dateOrder
+            }
+
+            return String(a.id ?? '').localeCompare(String(b.id ?? ''))
+          }
+
+          function normalizeLineup(value) {
+            const lineup = Array.isArray(value) ? value.slice(0, 4).map((name) => clean(name, '', 80) || '待补充') : []
+
+            while (lineup.length < 4) {
+              lineup.push('待补充')
+            }
+
+            return lineup
+          }
+
+          function formatRecord(record) {
+            return [
+              '  {',
+              `    "id": ${q(record.id)},`,
+              `    "date": ${q(record.date)},`,
+              `    "tournament": ${q(record.tournament)},`,
+              `    "motion": ${q(record.motion)},`,
+              `    "side": ${q(record.side)},`,
+              `    "result": ${q(record.result)},`,
+              `    "voteSplit": ${q(record.voteSplit)},`,
+              `    "bestDebater": ${q(record.bestDebater)},`,
+              `    "lineup": [${record.lineup.map(q).join(', ')}],`,
+              `    "videoUrl": ${q(record.videoUrl)},`,
+              `    "docUrl": ${q(record.docUrl)}`,
+              '  }',
+            ].join('\n')
+          }
+
+          function writeOutput(values) {
+            const lines = Object.entries(values).map(([key, value]) => `${key}=${value}`).join('\n')
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `${lines}\n`)
+          }
+
+          const date = requireDate(payload.date)
+          const record = {
+            id: `match-${date}-${issue.number}`,
+            date,
+            tournament: clean(payload.tournament, '', 200),
+            motion: clean(payload.motion, '', 800),
+            side: requireChoice(payload.side, allowedSides, 'side'),
+            result: requireChoice(payload.result, allowedResults, 'result'),
+            voteSplit: clean(payload.voteSplit, 'X：X', 40) || 'X：X',
+            bestDebater: clean(payload.bestDebater, '无', 120) || '无',
+            lineup: normalizeLineup(payload.lineup),
+            videoUrl: clean(payload.videoUrl, '', 1000),
+            docUrl: clean(payload.docUrl, '', 1000),
+          }
+
+          if (!record.tournament || !record.motion) {
+            throw new Error('Tournament and motion are required.')
+          }
+
+          const file = 'src/matches.json'
+          const records = JSON.parse(fs.readFileSync(file, 'utf8'))
+
+          if (records.some((match) => match.id === record.id)) {
+            writeOutput({ record_id: record.id, changed: 'false' })
+            process.exit(0)
+          }
+
+          records.push(record)
+          records.sort(compareByDate)
+          fs.writeFileSync(file, `[\n${records.map(formatRecord).join(',\n')}\n]\n`)
+          writeOutput({ record_id: record.id, changed: 'true' })
+          NODE
+
+      - name: Commit submitted match
+        if: steps.update.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/matches.json
+          git commit -m "Add submitted match ${{ steps.update.outputs.record_id }}"
+          git push
+
+      - name: Close processed issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RECORD_ID: ${{ steps.update.outputs.record_id }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "已自动写入比赛资料库：$RECORD_ID。"
+          gh issue close "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY"
