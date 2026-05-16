@@ -10,29 +10,37 @@ permissions:
 
 jobs:
   ingest:
-    if: contains(github.event.issue.body, 'AUTO_MATCH_SUBMISSION')
+    if: contains(github.event.issue.body, 'AUTO_MATCH_SUBMISSION') || contains(github.event.issue.body, 'AUTO_MATCH_UPDATE')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Add submitted match
+      - name: Add or update submitted match
         id: update
         run: |
           node <<'NODE'
           const fs = require('fs')
 
-          const marker = 'AUTO_MATCH_SUBMISSION'
+          const markers = [
+            { mode: 'create', marker: 'AUTO_MATCH_SUBMISSION' },
+            { mode: 'update', marker: 'AUTO_MATCH_UPDATE' },
+          ]
           const event = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'))
           const issue = event.issue
           const body = issue.body || ''
-          const block = body.match(new RegExp(`<!--\\s*${marker}\\s*([\\s\\S]*?)\\s*-->`))
+          const matched = markers
+            .map((entry) => ({
+              ...entry,
+              block: body.match(new RegExp(`<!--\\s*${entry.marker}\\s*([\\s\\S]*?)\\s*-->`)),
+            }))
+            .find((entry) => entry.block)
 
-          if (!block) {
+          if (!matched) {
             throw new Error('No match submission payload found')
           }
 
-          const payload = JSON.parse(block[1])
+          const payload = JSON.parse(matched.block[1])
           const allowedSides = new Set(['正方', '反方'])
           const allowedResults = new Set(['胜', '负', '平'])
 
@@ -61,8 +69,14 @@ jobs:
             return text
           }
 
-          function q(value) {
-            return JSON.stringify(value)
+          function normalizeVoteSplit(value) {
+            const text = clean(value, 'X：X', 40).replace(/\s+/g, '').replace(/:/g, '：') || 'X：X'
+
+            if (!/^(?:\d+|X|x)：(?:\d+|X|x)$/.test(text)) {
+              throw new Error('Invalid voteSplit. Expected X：X or 5：4 style.')
+            }
+
+            return text.toUpperCase()
           }
 
           function compareByDate(a, b) {
@@ -82,25 +96,11 @@ jobs:
               lineup.push('待补充')
             }
 
-            return lineup
-          }
+            if (!lineup.some((name) => name !== '待补充')) {
+              throw new Error('At least one lineup member is required.')
+            }
 
-          function formatRecord(record) {
-            return [
-              '  {',
-              `    "id": ${q(record.id)},`,
-              `    "date": ${q(record.date)},`,
-              `    "tournament": ${q(record.tournament)},`,
-              `    "motion": ${q(record.motion)},`,
-              `    "side": ${q(record.side)},`,
-              `    "result": ${q(record.result)},`,
-              `    "voteSplit": ${q(record.voteSplit)},`,
-              `    "bestDebater": ${q(record.bestDebater)},`,
-              `    "lineup": [${record.lineup.map(q).join(', ')}],`,
-              `    "videoUrl": ${q(record.videoUrl)},`,
-              `    "docUrl": ${q(record.docUrl)}`,
-              '  }',
-            ].join('\n')
+            return lineup
           }
 
           function writeOutput(values) {
@@ -110,35 +110,67 @@ jobs:
 
           const date = requireDate(payload.date)
           const record = {
-            id: `match-${date}-${issue.number}`,
+            id: matched.mode === 'update'
+              ? clean(payload.id, '', 120)
+              : `match-${date}-${issue.number}`,
             date,
             tournament: clean(payload.tournament, '', 200),
             motion: clean(payload.motion, '', 800),
             side: requireChoice(payload.side, allowedSides, 'side'),
             result: requireChoice(payload.result, allowedResults, 'result'),
-            voteSplit: clean(payload.voteSplit, 'X：X', 40) || 'X：X',
+            voteSplit: normalizeVoteSplit(payload.voteSplit),
             bestDebater: clean(payload.bestDebater, '无', 120) || '无',
             lineup: normalizeLineup(payload.lineup),
             videoUrl: clean(payload.videoUrl, '', 1000),
             docUrl: clean(payload.docUrl, '', 1000),
+            reviewUrl: clean(payload.reviewUrl, '', 1000),
+          }
+
+          const submitter = clean(payload.submitter, '', 80)
+          if (submitter) {
+            record.submitter = submitter
           }
 
           if (!record.tournament || !record.motion) {
             throw new Error('Tournament and motion are required.')
           }
 
-          const file = 'src/matches.json'
-          const records = JSON.parse(fs.readFileSync(file, 'utf8'))
-
-          if (records.some((match) => match.id === record.id)) {
-            writeOutput({ record_id: record.id, changed: 'false' })
-            process.exit(0)
+          if (matched.mode === 'update' && !record.id) {
+            throw new Error('Record id is required for update.')
           }
 
-          records.push(record)
-          records.sort(compareByDate)
-          fs.writeFileSync(file, `[\n${records.map(formatRecord).join(',\n')}\n]\n`)
-          writeOutput({ record_id: record.id, changed: 'true' })
+          const file = 'src/matches.json'
+          const records = JSON.parse(fs.readFileSync(file, 'utf8'))
+          let changed = false
+
+          if (matched.mode === 'create') {
+            if (!records.some((match) => match.id === record.id)) {
+              records.push(record)
+              changed = true
+            }
+          } else {
+            const index = records.findIndex((match) => match.id === record.id)
+
+            if (index === -1) {
+              throw new Error(`Cannot find match to update: ${record.id}`)
+            }
+
+            const nextRecord = { ...records[index], ...record }
+            changed = JSON.stringify(records[index]) !== JSON.stringify(nextRecord)
+            records[index] = nextRecord
+          }
+
+          if (changed) {
+            records.sort(compareByDate)
+            fs.writeFileSync(file, `${JSON.stringify(records, null, 2)}\n`)
+          }
+
+          writeOutput({
+            record_id: record.id,
+            changed: String(changed),
+            action_label: matched.mode === 'update' ? '更新' : '新增',
+            commit_message: `${matched.mode === 'update' ? 'Update' : 'Add'} submitted match ${record.id}`,
+          })
           NODE
 
       - name: Commit submitted match
@@ -147,7 +179,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add src/matches.json
-          git commit -m "Add submitted match ${{ steps.update.outputs.record_id }}"
+          git commit -m "${{ steps.update.outputs.commit_message }}"
           git push
 
       - name: Close processed issue
@@ -155,6 +187,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           RECORD_ID: ${{ steps.update.outputs.record_id }}
+          ACTION_LABEL: ${{ steps.update.outputs.action_label }}
+          CHANGED: ${{ steps.update.outputs.changed }}
         run: |
-          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "已自动写入比赛资料库：$RECORD_ID。"
+          if [ "$CHANGED" = "true" ]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "已自动${ACTION_LABEL}比赛资料库：$RECORD_ID。"
+          else
+            gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body "已收到赛果请求，但资料库内容没有变化：$RECORD_ID。"
+          fi
           gh issue close "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY"
