@@ -1,5 +1,8 @@
 const REPOSITORY_URL = 'https://github.com/himmelwang2323/debate-team-stats'
 const SUBMISSION_MARKER = 'AUTO_MATCH_SUBMISSION'
+const UPDATE_MARKER = 'AUTO_MATCH_UPDATE'
+
+let currentMode = 'create'
 
 function todayValue() {
   const now = new Date()
@@ -7,37 +10,90 @@ function todayValue() {
   return localDate.toISOString().slice(0, 10)
 }
 
+function field(id) {
+  return document.getElementById(id)
+}
+
 function value(id) {
-  return document.getElementById(id)?.value.trim() ?? ''
+  return field(id)?.value.trim() ?? ''
+}
+
+function normalizeExternalUrl(href) {
+  const text = String(href ?? '').trim()
+
+  if (!text) return ''
+  if (text.startsWith('//')) return `https:${text}`
+  if (/^https?:\/\//i.test(text)) return text
+
+  return `https://${text}`
+}
+
+function isValidExternalUrl(href) {
+  if (!String(href ?? '').trim()) return true
+
+  try {
+    const url = new URL(normalizeExternalUrl(href))
+    return url.protocol === 'https:' || url.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+function normalizeVoteSplit(rawValue) {
+  const text = String(rawValue || 'X：X').trim().replace(/\s+/g, '').replace(/:/g, '：')
+  return text || 'X：X'
+}
+
+function isValidVoteSplit(rawValue) {
+  return /^(?:\d+|X|x)：(?:\d+|X|x)$/.test(normalizeVoteSplit(rawValue))
+}
+
+function lineupValues() {
+  return [1, 2, 3, 4].map((index) => value(`submit-lineup-${index}`))
 }
 
 function formData() {
+  const lineup = lineupValues()
+
   return {
+    id: value('submit-id'),
     date: value('submit-date'),
     tournament: value('submit-tournament'),
     motion: value('submit-motion'),
     side: value('submit-side') || '正方',
     result: value('submit-result') || '胜',
-    voteSplit: value('submit-vote') || 'X：X',
+    voteSplit: normalizeVoteSplit(value('submit-vote')),
     bestDebater: value('submit-best') || '无',
-    lineup: [1, 2, 3, 4].map((index) => value(`submit-lineup-${index}`) || '待补充'),
+    lineup: lineup.map((name) => name || '待补充'),
+    submitter: value('submit-submitter'),
     videoUrl: value('submit-video'),
     docUrl: value('submit-doc'),
+    reviewUrl: value('submit-review'),
   }
 }
 
-function submissionError(data) {
+function submissionError(data, mode) {
+  if (mode === 'update' && !data.id) return '修改赛果需要原记录 ID'
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data.date)) return '请填写 YYYY-MM-DD 格式的日期'
   if (!data.tournament) return '请填写赛事名称'
   if (!data.motion) return '请填写辩题'
+  if (!isValidVoteSplit(data.voteSplit)) return '票型请使用 X：X 或 5：4 这样的格式'
+  if (!lineupValues().some(Boolean)) return '请至少填写一位上赛人员'
+  if (!isValidExternalUrl(data.videoUrl)) return '录像链接格式不正确'
+  if (!isValidExternalUrl(data.docUrl)) return '资料链接格式不正确'
+  if (!isValidExternalUrl(data.reviewUrl)) return '复盘链接格式不正确'
   return ''
 }
 
-function issueUrl(data) {
-  const title = `赛果提交：${data.date} ${data.tournament}`
+function issueUrl(data, mode) {
+  const marker = mode === 'update' ? UPDATE_MARKER : SUBMISSION_MARKER
+  const title = mode === 'update'
+    ? `赛果修改：${data.id} ${data.date} ${data.tournament}`
+    : `赛果提交：${data.date} ${data.tournament}`
   const body = [
-    '### 赛果提交',
+    mode === 'update' ? '### 赛果修改' : '### 赛果提交',
     '',
+    `记录 ID：${data.id || '自动生成'}`,
     `日期：${data.date}`,
     `赛事：${data.tournament}`,
     `辩题：${data.motion}`,
@@ -46,8 +102,12 @@ function issueUrl(data) {
     `票型：${data.voteSplit}`,
     `最佳辩手：${data.bestDebater}`,
     `阵容：${data.lineup.join(' / ')}`,
+    `录入/修改人：${data.submitter || '未填写'}`,
+    `录像链接：${data.videoUrl || '未填写'}`,
+    `资料链接：${data.docUrl || '未填写'}`,
+    `复盘链接：${data.reviewUrl || '未填写'}`,
     '',
-    `<!-- ${SUBMISSION_MARKER}`,
+    `<!-- ${marker}`,
     JSON.stringify(data, null, 2),
     '-->',
   ].join('\n')
@@ -127,13 +187,13 @@ function downloadPoster(data) {
 
 function renderPreview() {
   const data = formData()
-  document.getElementById('poster-tournament').textContent = data.tournament || '赛事名称'
-  document.getElementById('poster-meta').textContent = `${data.date || 'YYYY-MM-DD'} · 我方${data.side} · ${data.voteSplit}`
-  document.getElementById('poster-result').textContent = `赛果：${data.result}`
-  document.getElementById('poster-motion').textContent = data.motion || '辩题内容'
-  document.getElementById('poster-best').textContent = `最佳辩手：${data.bestDebater}`
-  document.getElementById('poster-lineup').textContent = `阵容：${data.lineup.join(' / ')}`
-  document.getElementById('poster-download').disabled = data.result !== '胜'
+  field('poster-tournament').textContent = data.tournament || '赛事名称'
+  field('poster-meta').textContent = `${data.date || 'YYYY-MM-DD'} · 我方${data.side} · ${data.voteSplit}`
+  field('poster-result').textContent = `赛果：${data.result}`
+  field('poster-motion').textContent = data.motion || '辩题内容'
+  field('poster-best').textContent = `最佳辩手：${data.bestDebater}`
+  field('poster-lineup').textContent = `阵容：${data.lineup.join(' / ')}`
+  field('poster-download').disabled = data.result !== '胜'
 }
 
 function modalTemplate() {
@@ -142,33 +202,37 @@ function modalTemplate() {
       <section class="w-full max-w-5xl rounded-lg border border-line bg-white shadow-2xl">
         <div class="flex items-start justify-between gap-4 border-b border-line px-5 py-4">
           <div>
-            <h2 class="text-lg font-semibold text-ink">提交赛果</h2>
-            <p class="mt-1 text-sm text-slate-500">新增比赛记录与胜场喜报</p>
+            <p id="submit-mode-label" class="text-xs font-semibold text-slate-500">新增记录</p>
+            <h2 id="submit-title" class="mt-1 text-lg font-semibold text-ink">提交赛果</h2>
+            <p id="submit-description" class="mt-1 text-sm text-slate-500">新增比赛记录与胜场喜报</p>
           </div>
           <button id="submit-close" type="button" aria-label="关闭提交窗口" class="grid h-9 w-9 shrink-0 place-items-center rounded-md text-slate-500 transition hover:bg-field hover:text-ink">×</button>
         </div>
         <div class="grid gap-5 p-5 lg:grid-cols-[1fr_320px]">
           <div class="grid gap-4">
-            <div class="grid gap-3 md:grid-cols-3">
+            <input id="submit-id" type="hidden" />
+            <div class="grid gap-3 md:grid-cols-4">
               <label class="grid gap-1 text-sm font-medium text-slate-600">日期<input id="submit-date" type="date" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
               <label class="grid gap-1 text-sm font-medium text-slate-600 md:col-span-2">赛事<input id="submit-tournament" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">录入/修改人<input id="submit-submitter" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
             </div>
             <label class="grid gap-1 text-sm font-medium text-slate-600">辩题<textarea id="submit-motion" rows="3" class="rounded-md border border-line bg-field px-3 py-2 text-sm leading-6 text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"></textarea></label>
             <div class="grid gap-3 md:grid-cols-4">
-              <label class="grid gap-1 text-sm font-medium text-slate-600">持方<select id="submit-side" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none"><option>正方</option><option>反方</option></select></label>
-              <label class="grid gap-1 text-sm font-medium text-slate-600">赛果<select id="submit-result" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none"><option>胜</option><option>负</option><option>平</option></select></label>
-              <label class="grid gap-1 text-sm font-medium text-slate-600">票型<input id="submit-vote" value="X：X" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none" /></label>
-              <label class="grid gap-1 text-sm font-medium text-slate-600">最佳辩手<input id="submit-best" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none" /></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">持方<select id="submit-side" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"><option>正方</option><option>反方</option></select></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">赛果<select id="submit-result" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200"><option>胜</option><option>负</option><option>平</option></select></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">票型<input id="submit-vote" value="X：X" placeholder="5：4" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">最佳辩手<input id="submit-best" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
             </div>
             <div class="grid gap-3 md:grid-cols-4">
-              <label class="grid gap-1 text-sm font-medium text-slate-600">一辩<input id="submit-lineup-1" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none" /></label>
-              <label class="grid gap-1 text-sm font-medium text-slate-600">二辩<input id="submit-lineup-2" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none" /></label>
-              <label class="grid gap-1 text-sm font-medium text-slate-600">三辩<input id="submit-lineup-3" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none" /></label>
-              <label class="grid gap-1 text-sm font-medium text-slate-600">四辩/结辩<input id="submit-lineup-4" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none" /></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">一辩<input id="submit-lineup-1" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">二辩<input id="submit-lineup-2" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">三辩<input id="submit-lineup-3" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">四辩/结辩<input id="submit-lineup-4" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
             </div>
-            <div class="grid gap-3 md:grid-cols-2">
-              <label class="grid gap-1 text-sm font-medium text-slate-600">录像链接<input id="submit-video" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none" /></label>
-              <label class="grid gap-1 text-sm font-medium text-slate-600">资料链接<input id="submit-doc" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none" /></label>
+            <div class="grid gap-3 md:grid-cols-3">
+              <label class="grid gap-1 text-sm font-medium text-slate-600">录像链接<input id="submit-video" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">资料链接<input id="submit-doc" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
+              <label class="grid gap-1 text-sm font-medium text-slate-600">复盘链接<input id="submit-review" class="h-10 rounded-md border border-line bg-field px-3 text-sm text-ink outline-none focus:border-slate-400 focus:bg-white focus:ring-2 focus:ring-slate-200" /></label>
             </div>
           </div>
           <aside class="grid content-start gap-3">
@@ -190,7 +254,10 @@ function modalTemplate() {
           </aside>
         </div>
         <div class="flex flex-col gap-3 border-t border-line px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <p id="submit-error" class="min-h-5 text-sm text-rose-700"></p>
+          <div>
+            <p id="submit-error" class="min-h-5 text-sm text-rose-700"></p>
+            <p id="submit-status" class="text-sm text-slate-500">校验通过后会打开 GitHub Issue 页面，确认提交后仓库会自动同步。</p>
+          </div>
           <div class="flex flex-wrap gap-2 sm:justify-end">
             <button id="submit-reset" type="button" class="inline-flex h-10 items-center justify-center rounded-md border border-line bg-white px-4 text-sm font-medium text-slate-600 transition hover:border-slate-400 hover:bg-field">重置</button>
             <button id="submit-open-issue" type="button" class="inline-flex h-10 items-center justify-center rounded-md bg-ink px-4 text-sm font-medium text-white transition hover:bg-slate-700">提交到仓库</button>
@@ -201,21 +268,36 @@ function modalTemplate() {
   `
 }
 
-function resetForm() {
-  document.getElementById('submit-date').value = todayValue()
-  document.getElementById('submit-tournament').value = ''
-  document.getElementById('submit-motion').value = ''
-  document.getElementById('submit-side').value = '正方'
-  document.getElementById('submit-result').value = '胜'
-  document.getElementById('submit-vote').value = 'X：X'
-  document.getElementById('submit-best').value = ''
+function fillForm(match = {}, mode = 'create') {
+  currentMode = mode === 'update' ? 'update' : 'create'
+  field('submit-id').value = currentMode === 'update' ? (match.id || '') : ''
+  field('submit-date').value = match.date || todayValue()
+  field('submit-tournament').value = match.tournament || ''
+  field('submit-motion').value = match.motion || ''
+  field('submit-side').value = match.side || '正方'
+  field('submit-result').value = match.result || '胜'
+  field('submit-vote').value = normalizeVoteSplit(match.voteSplit || 'X：X')
+  field('submit-best').value = match.bestDebater === '无' ? '' : (match.bestDebater || '')
+  field('submit-submitter').value = match.submitter || ''
   ;[1, 2, 3, 4].forEach((index) => {
-    document.getElementById(`submit-lineup-${index}`).value = ''
+    field(`submit-lineup-${index}`).value = Array.isArray(match.lineup) ? (match.lineup[index - 1] || '') : ''
   })
-  document.getElementById('submit-video').value = ''
-  document.getElementById('submit-doc').value = ''
-  document.getElementById('submit-error').textContent = ''
+  field('submit-video').value = match.videoUrl || ''
+  field('submit-doc').value = match.docUrl || ''
+  field('submit-review').value = match.reviewUrl || ''
+  field('submit-error').textContent = ''
+  field('submit-status').textContent = currentMode === 'update'
+    ? '修改会按记录 ID 覆盖原比赛信息，确认提交后仓库会自动同步。'
+    : '校验通过后会打开 GitHub Issue 页面，确认提交后仓库会自动同步。'
+  field('submit-mode-label').textContent = currentMode === 'update' ? '修改记录' : '新增记录'
+  field('submit-title').textContent = currentMode === 'update' ? '修改赛果' : '提交赛果'
+  field('submit-description').textContent = currentMode === 'update' ? '修正已有比赛记录' : '新增比赛记录与胜场喜报'
+  field('submit-open-issue').textContent = currentMode === 'update' ? '提交修改到仓库' : '提交到仓库'
   renderPreview()
+}
+
+function resetForm() {
+  fillForm({}, currentMode)
 }
 
 function mountSubmissionWidget() {
@@ -232,26 +314,36 @@ function mountSubmissionWidget() {
 
   document.body.insertAdjacentHTML('beforeend', modalTemplate())
   const modal = document.getElementById('submit-modal')
-  const close = () => modal.classList.add('hidden')
-  const open = () => {
+  const close = () => {
+    modal.classList.add('hidden')
+    modal.classList.remove('flex')
+  }
+  const open = (match = {}, mode = 'create') => {
+    fillForm(match, mode)
     modal.classList.remove('hidden')
     modal.classList.add('flex')
-    renderPreview()
   }
 
-  button.addEventListener('click', open)
+  button.addEventListener('click', () => open({}, 'create'))
+  window.addEventListener('open-match-submission', (event) => {
+    open(event.detail?.match ?? {}, event.detail?.mode ?? 'create')
+  })
   document.getElementById('submit-close').addEventListener('click', close)
   document.getElementById('submit-reset').addEventListener('click', resetForm)
   document.getElementById('poster-download').addEventListener('click', () => downloadPoster(formData()))
   document.getElementById('submit-open-issue').addEventListener('click', () => {
     const data = formData()
-    const error = submissionError(data)
-    document.getElementById('submit-error').textContent = error
-    if (!error) window.open(issueUrl(data), '_blank', 'noopener,noreferrer')
+    const error = submissionError(data, currentMode)
+    field('submit-error').textContent = error
+
+    if (!error) {
+      field('submit-status').textContent = '已打开 GitHub Issue 页面；请在新页面点提交，随后会自动写入并重新部署。'
+      window.open(issueUrl(data, currentMode), '_blank', 'noopener,noreferrer')
+    }
   })
   modal.addEventListener('input', renderPreview)
   modal.addEventListener('change', renderPreview)
-  resetForm()
+  fillForm({}, 'create')
   return true
 }
 
