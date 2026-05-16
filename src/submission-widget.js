@@ -220,7 +220,8 @@ function resetForm() {
 
 function mountSubmissionWidget() {
   const header = document.querySelector('header .mx-auto')
-  if (!header || document.getElementById('submit-result-button')) return
+  if (document.getElementById('submit-result-button')) return true
+  if (!header) return false
 
   const button = document.createElement('button')
   button.id = 'submit-result-button'
@@ -251,10 +252,26 @@ function mountSubmissionWidget() {
   modal.addEventListener('input', renderPreview)
   modal.addEventListener('change', renderPreview)
   resetForm()
+  return true
+}
+
+function scheduleMountSubmissionWidget() {
+  if (mountSubmissionWidget()) return
+
+  const root = document.getElementById('root') || document.body
+  const observer = new MutationObserver(() => {
+    if (mountSubmissionWidget()) observer.disconnect()
+  })
+
+  observer.observe(root, { childList: true, subtree: true })
+  window.setTimeout(() => {
+    observer.disconnect()
+    mountSubmissionWidget()
+  }, 5000)
 }
 
 if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', mountSubmissionWidget)
+  document.addEventListener('DOMContentLoaded', scheduleMountSubmissionWidget)
 } else {
-  mountSubmissionWidget()
+  scheduleMountSubmissionWidget()
 }
