@@ -11,11 +11,8 @@ import {
   GraduationCap,
   Pencil,
   Search,
-  SlidersHorizontal,
   Trophy,
-  Users,
   Video,
-  Vote,
   X as XIcon,
 } from 'lucide-react'
 import matches from './matches.json'
@@ -36,6 +33,16 @@ const resultStyles = {
   负: 'bg-rose-50 text-loss ring-rose-200',
   平: 'bg-slate-50 text-slate-600 ring-slate-200',
 }
+
+const NO_SECONDARY_DIMENSION = 'none'
+
+const analysisDimensions = [
+  { value: 'debater', label: '辩手' },
+  { value: 'tournament', label: '赛事' },
+  { value: 'voteSplit', label: '票型' },
+  { value: 'side', label: '持方' },
+  { value: 'result', label: '赛果' },
+]
 
 function normalizeExternalUrl(href) {
   const value = String(href ?? '').trim()
@@ -169,49 +176,6 @@ function calculateTrainingStats(records) {
   return { total, instructors, latestDate, linked }
 }
 
-function groupRecordStats(records, keyGetter) {
-  const groups = new Map()
-
-  records.forEach((match) => {
-    const key = keyGetter(match)
-    if (!key) return
-
-    const current = groups.get(key) ?? { label: key, total: 0, wins: 0 }
-    current.total += 1
-    if (match.result === '胜') current.wins += 1
-    groups.set(key, current)
-  })
-
-  return [...groups.values()].sort((a, b) => b.total - a.total || b.wins - a.wins || a.label.localeCompare(b.label, 'zh-Hans-CN'))
-}
-
-function calculateMatchInsights(records) {
-  const debaters = new Map()
-
-  records.forEach((match) => {
-    getLineup(match).forEach((name) => {
-      const current = debaters.get(name) ?? { label: name, total: 0, wins: 0, best: 0 }
-      current.total += 1
-      if (match.result === '胜') current.wins += 1
-      debaters.set(name, current)
-    })
-
-    splitNames(match.bestDebater).forEach((name) => {
-      const current = debaters.get(name) ?? { label: name, total: 0, wins: 0, best: 0 }
-      current.best += 1
-      debaters.set(name, current)
-    })
-  })
-
-  return {
-    years: groupRecordStats(records, getYear),
-    tournaments: groupRecordStats(records, (match) => match.tournament),
-    sides: groupRecordStats(records, (match) => match.side),
-    voteSplits: groupRecordStats(records, (match) => match.voteSplit || 'X：X'),
-    debaters: [...debaters.values()].sort((a, b) => b.total - a.total || b.best - a.best || a.label.localeCompare(b.label, 'zh-Hans-CN')),
-  }
-}
-
 function getMatchFilterOptions(records) {
   return {
     years: uniqueSorted(records.map(getYear), true),
@@ -220,6 +184,89 @@ function getMatchFilterOptions(records) {
     results: ['胜', '负', '平'],
     sides: ['正方', '反方'],
   }
+}
+
+function getAnalysisDimensionLabel(value) {
+  return analysisDimensions.find((dimension) => dimension.value === value)?.label ?? '维度'
+}
+
+function getAnalysisDimensionValues(match, dimension) {
+  switch (dimension) {
+    case 'debater': {
+      const lineup = getLineup(match)
+      return lineup.length ? lineup : ['未填写']
+    }
+    case 'tournament':
+      return [match.tournament || '未填写']
+    case 'voteSplit':
+      return [match.voteSplit || 'X：X']
+    case 'side':
+      return [match.side || '未填写']
+    case 'result':
+      return [match.result || '待定']
+    default:
+      return ['全部']
+  }
+}
+
+function countBestDebaterForGroup(match, primaryDimension, primaryValue, secondaryDimension, secondaryValue) {
+  const bestDebaters = splitNames(match.bestDebater)
+
+  if (!bestDebaters.length) {
+    return 0
+  }
+
+  const debaterValues = []
+  if (primaryDimension === 'debater') debaterValues.push(primaryValue)
+  if (secondaryDimension === 'debater') debaterValues.push(secondaryValue)
+
+  if (debaterValues.length) {
+    return debaterValues.some((name) => bestDebaters.includes(name)) ? 1 : 0
+  }
+
+  return bestDebaters.length
+}
+
+function calculateAnalysisRows(records, primaryDimension, secondaryDimension) {
+  const effectiveSecondary = primaryDimension === secondaryDimension ? NO_SECONDARY_DIMENSION : secondaryDimension
+  const groups = new Map()
+
+  records.forEach((match) => {
+    const primaryValues = getAnalysisDimensionValues(match, primaryDimension)
+    const secondaryValues = effectiveSecondary === NO_SECONDARY_DIMENSION
+      ? ['全部']
+      : getAnalysisDimensionValues(match, effectiveSecondary)
+
+    primaryValues.forEach((primaryValue) => {
+      secondaryValues.forEach((secondaryValue) => {
+        const key = `${primaryValue}\u0000${secondaryValue}`
+        const current = groups.get(key) ?? {
+          primaryValue,
+          secondaryValue,
+          total: 0,
+          wins: 0,
+          losses: 0,
+          draws: 0,
+          best: 0,
+        }
+
+        current.total += 1
+        if (match.result === '胜') current.wins += 1
+        if (match.result === '负') current.losses += 1
+        if (match.result === '平') current.draws += 1
+        current.best += countBestDebaterForGroup(match, primaryDimension, primaryValue, effectiveSecondary, secondaryValue)
+
+        groups.set(key, current)
+      })
+    })
+  })
+
+  return [...groups.values()].sort((a, b) => (
+    b.total - a.total ||
+    b.wins - a.wins ||
+    a.primaryValue.localeCompare(b.primaryValue, 'zh-Hans-CN') ||
+    a.secondaryValue.localeCompare(b.secondaryValue, 'zh-Hans-CN')
+  ))
 }
 
 function hasActiveMatchFilters(filters) {
@@ -271,64 +318,6 @@ function TrainingStatsBoard({ records, isFiltered }) {
   )
 }
 
-function InsightPanel({ title, icon: Icon, children }) {
-  return (
-    <section className="rounded-lg border border-line bg-white p-5 shadow-panel">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-ink">{title}</h2>
-        <span className="grid h-8 w-8 place-items-center rounded-md bg-field text-slate-600">
-          <Icon size={17} strokeWidth={1.8} />
-        </span>
-      </div>
-      {children}
-    </section>
-  )
-}
-
-function EmptyInsight() {
-  return <p className="text-sm text-slate-500">暂无匹配数据</p>
-}
-
-function StatLine({ item, detail }) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-line py-2 last:border-0">
-      <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-ink">{item.label}</p>
-        <p className="text-xs text-slate-500">{detail ?? `${item.wins}/${item.total} 胜 · ${formatWinRate(item.wins, item.total)}`}</p>
-      </div>
-      <span className="shrink-0 rounded-md bg-field px-2 py-1 text-xs font-semibold text-slate-600">{item.total}</span>
-    </div>
-  )
-}
-
-function MatchInsights({ records }) {
-  const insights = useMemo(() => calculateMatchInsights(records), [records])
-
-  return (
-    <section className="grid gap-4 lg:grid-cols-5">
-      <InsightPanel title="按年份" icon={CalendarDays}>
-        {insights.years.length ? insights.years.slice(0, 5).map((item) => <StatLine key={item.label} item={item} />) : <EmptyInsight />}
-      </InsightPanel>
-      <InsightPanel title="按赛事" icon={BarChart3}>
-        {insights.tournaments.length ? insights.tournaments.slice(0, 5).map((item) => <StatLine key={item.label} item={item} />) : <EmptyInsight />}
-      </InsightPanel>
-      <InsightPanel title="按持方" icon={Vote}>
-        {insights.sides.length ? insights.sides.map((item) => <StatLine key={item.label} item={item} />) : <EmptyInsight />}
-      </InsightPanel>
-      <InsightPanel title="辩手统计" icon={Users}>
-        {insights.debaters.length ? insights.debaters.slice(0, 6).map((item) => (
-          <StatLine key={item.label} item={item} detail={`${item.wins}/${item.total} 胜 · 佳辩 ${item.best} 次`} />
-        )) : <EmptyInsight />}
-      </InsightPanel>
-      <InsightPanel title="票型分布" icon={SlidersHorizontal}>
-        {insights.voteSplits.length ? insights.voteSplits.map((item) => (
-          <StatLine key={item.label} item={item} detail={`${item.total} 场出现`} />
-        )) : <EmptyInsight />}
-      </InsightPanel>
-    </section>
-  )
-}
-
 function FilterSelect({ label, value, options, onChange }) {
   return (
     <label className="grid gap-1 text-xs font-medium text-slate-500">
@@ -361,6 +350,7 @@ function FilterBar({
 }) {
   const hasQuery = query.trim().length > 0
   const isTrainingView = activeView === 'trainings'
+  const isAnalysisView = activeView === 'analysis'
   const searchConfig = isTrainingView
     ? {
         label: '搜索队训信息',
@@ -369,6 +359,14 @@ function FilterBar({
         chips: ['日期', '授课人'],
         unit: '条',
       }
+    : isAnalysisView
+      ? {
+          label: '筛选分析样本',
+          placeholder: '搜索姓名、日期或赛事',
+          description: '先筛选比赛样本，再进入维度组合统计。',
+          chips: ['赛事', '辩手', '票型', '持方', '赛果'],
+          unit: '场',
+        }
     : {
         label: '搜索比赛信息',
         placeholder: '搜索姓名、日期或赛事',
@@ -397,20 +395,30 @@ function FilterBar({
         <div>
           <h2 className="text-sm font-semibold text-ink">数据检索</h2>
           <p className="text-sm leading-6 text-slate-500">{searchConfig.description}</p>
-          <div className="mt-3 inline-flex rounded-md border border-line bg-field p-1">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-md border border-line bg-field p-1">
+              <button
+                type="button"
+                onClick={() => switchView('matches')}
+                className={`h-8 rounded px-3 text-sm font-medium transition ${activeView === 'matches' ? 'bg-white text-ink shadow-sm' : 'text-slate-500 hover:text-ink'}`}
+              >
+                比赛
+              </button>
+              <button
+                type="button"
+                onClick={() => switchView('trainings')}
+                className={`h-8 rounded px-3 text-sm font-medium transition ${isTrainingView ? 'bg-white text-ink shadow-sm' : 'text-slate-500 hover:text-ink'}`}
+              >
+                队训
+              </button>
+            </div>
             <button
               type="button"
-              onClick={() => switchView('matches')}
-              className={`h-8 rounded px-3 text-sm font-medium transition ${activeView === 'matches' ? 'bg-white text-ink shadow-sm' : 'text-slate-500 hover:text-ink'}`}
+              onClick={() => switchView('analysis')}
+              className={`inline-flex h-10 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium transition ${isAnalysisView ? 'border-slate-900 bg-slate-900 text-white' : 'border-line bg-white text-slate-600 hover:border-slate-400 hover:text-ink'}`}
             >
-              比赛
-            </button>
-            <button
-              type="button"
-              onClick={() => switchView('trainings')}
-              className={`h-8 rounded px-3 text-sm font-medium transition ${isTrainingView ? 'bg-white text-ink shadow-sm' : 'text-slate-500 hover:text-ink'}`}
-            >
-              队训
+              <BarChart3 size={16} strokeWidth={1.9} />
+              数据分析
             </button>
           </div>
         </div>
@@ -701,12 +709,95 @@ function TrainingTable({ records }) {
   )
 }
 
+function AnalysisDashboard({ records }) {
+  const [primaryDimension, setPrimaryDimension] = useState('debater')
+  const [secondaryDimension, setSecondaryDimension] = useState('voteSplit')
+  const effectiveSecondary = primaryDimension === secondaryDimension ? NO_SECONDARY_DIMENSION : secondaryDimension
+  const rows = useMemo(() => calculateAnalysisRows(records, primaryDimension, effectiveSecondary), [records, primaryDimension, effectiveSecondary])
+  const stats = calculateStats(records)
+  const primaryLabel = getAnalysisDimensionLabel(primaryDimension)
+  const secondaryLabel = effectiveSecondary === NO_SECONDARY_DIMENSION ? '汇总' : getAnalysisDimensionLabel(effectiveSecondary)
+  const primaryOptions = analysisDimensions.map((dimension) => ({ value: dimension.value, label: dimension.label }))
+  const secondaryOptions = [
+    { value: NO_SECONDARY_DIMENSION, label: '不交叉' },
+    ...analysisDimensions
+      .filter((dimension) => dimension.value !== primaryDimension)
+      .map((dimension) => ({ value: dimension.value, label: dimension.label })),
+  ]
+
+  function changePrimaryDimension(value) {
+    setPrimaryDimension(value)
+    setSecondaryDimension((current) => current === value ? NO_SECONDARY_DIMENSION : current)
+  }
+
+  return (
+    <section className="overflow-hidden rounded-lg border border-line bg-white shadow-panel">
+      <div className="flex flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-sm font-medium text-slate-500">Analysis Board</p>
+          <h2 className="mt-1 text-lg font-semibold text-ink">数据分析</h2>
+          <p className="mt-1 text-sm text-slate-500">当前样本 {stats.total} 场 · 胜率 {stats.winRate}% · 组合 {rows.length} 组</p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 lg:w-[420px]">
+          <FilterSelect
+            label="主维度"
+            value={primaryDimension}
+            options={primaryOptions}
+            onChange={changePrimaryDimension}
+          />
+          <FilterSelect
+            label="交叉维度"
+            value={effectiveSecondary}
+            options={secondaryOptions}
+            onChange={setSecondaryDimension}
+          />
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-[880px] w-full border-collapse text-left">
+          <thead className="bg-field text-sm text-slate-600">
+            <tr>
+              <th className="px-5 py-3 font-semibold">{primaryLabel}</th>
+              <th className="px-5 py-3 font-semibold">{secondaryLabel}</th>
+              <th className="px-5 py-3 font-semibold">计数</th>
+              <th className="px-5 py-3 font-semibold">胜</th>
+              <th className="px-5 py-3 font-semibold">负</th>
+              <th className="px-5 py-3 font-semibold">平</th>
+              <th className="px-5 py-3 font-semibold">胜率</th>
+              <th className="px-5 py-3 font-semibold">佳辩</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.length ? rows.map((row) => (
+              <tr key={`${row.primaryValue}-${row.secondaryValue}`} className="hover:bg-slate-50/70">
+                <td className="px-5 py-4 text-sm font-medium text-ink">{row.primaryValue}</td>
+                <td className="px-5 py-4 text-sm text-slate-600">{row.secondaryValue}</td>
+                <td className="px-5 py-4 text-sm font-semibold text-ink">{row.total}</td>
+                <td className="px-5 py-4 text-sm text-win">{row.wins}</td>
+                <td className="px-5 py-4 text-sm text-loss">{row.losses}</td>
+                <td className="px-5 py-4 text-sm text-slate-600">{row.draws}</td>
+                <td className="px-5 py-4 text-sm font-medium text-ink">{formatWinRate(row.wins, row.total)}</td>
+                <td className="px-5 py-4 text-sm text-slate-600">{row.best}</td>
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={8} className="px-5 py-10 text-center text-sm text-slate-500">没有可分析的比赛记录</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  )
+}
+
 function App() {
   const [activeView, setActiveView] = useState('matches')
   const [query, setQuery] = useState('')
   const [matchFilters, setMatchFilters] = useState(EMPTY_MATCH_FILTERS)
   const [showAllMatches, setShowAllMatches] = useState(false)
   const isTrainingView = activeView === 'trainings'
+  const isAnalysisView = activeView === 'analysis'
   const sortedMatches = useMemo(() => [...matches].sort(compareByDateDesc), [])
   const sortedTrainings = useMemo(() => [...trainings].sort(compareByDateDesc), [])
   const matchFilterOptions = useMemo(() => getMatchFilterOptions(sortedMatches), [sortedMatches])
@@ -725,6 +816,7 @@ function App() {
   function switchView(nextView) {
     setActiveView(nextView)
     setQuery('')
+    setShowAllMatches(false)
   }
 
   return (
@@ -744,12 +836,9 @@ function App() {
       <div className="mx-auto grid max-w-7xl gap-5 px-5 py-6">
         {isTrainingView ? (
           <TrainingStatsBoard records={visibleTrainings} isFiltered={isFiltered} />
-        ) : (
-          <>
-            <StatsBoard records={visibleMatches} isFiltered={isFiltered} />
-            <MatchInsights records={visibleMatches} />
-          </>
-        )}
+        ) : !isAnalysisView ? (
+          <StatsBoard records={visibleMatches} isFiltered={isFiltered} />
+        ) : null}
         <FilterBar
           activeView={activeView}
           onViewChange={switchView}
@@ -771,6 +860,8 @@ function App() {
         />
         {isTrainingView ? (
           <TrainingTable records={visibleTrainings} />
+        ) : isAnalysisView ? (
+          <AnalysisDashboard records={visibleMatches} />
         ) : (
           <MatchTable
             records={visibleMatches}
